@@ -457,11 +457,13 @@
         }
         function getDerivedHeight() {
             const { aw, ah } = parseAspect(els.aspect.value);
-            const width = 2048; // or less if model limits
+            let width = 2048; // smaller, more stable
             let height = Math.round(width * (ah / aw));
-            height = Math.round(height / 64) * 64; // AI models prefer multiples of 64
+            width = Math.round(width / 64) * 64;
+            height = Math.round(height / 64) * 64;
             return { width, height };
         }
+
 
 
         //els.aspect.addEventListener('change', updateDerivedHeight);
@@ -480,7 +482,7 @@
 
             // Set format and ultra-high quality
             q.set('format', format); // 'png' or 'jpeg'
-            q.set('q', 'high');      // Pollinations parameter for best quality
+            q.set('q', 'ultra'); 
 
             return base + encodeURIComponent(prompt) + '?' + q.toString();
         }
@@ -628,6 +630,47 @@
         // Attach to the button
         els.downloadAll.addEventListener('click', downloadAllZip);
 
+        async function generateSingleImage(p, idx, total, chosenModel, width, height, outFormat, seedBase, nologo, smartRetries, uniqueRetries, adaptive, avoidDup) {
+            let success = false;
+            let attempt = 0;
+            let lastErr = null;
+            const prefSeed = adaptive ? pickSeed(p, undefined) : undefined;
+
+            while (attempt <= smartRetries && !success && !cancel) {
+                attempt++;
+                updateActivePrompt(`Prompt ${idx}/${total}: ${p} (try ${attempt}/${smartRetries + 1})`);
+
+                let seedToUse = (prefSeed !== undefined) ? prefSeed : (seedBase !== null ? seedBase : undefined);
+                if (attempt > 1) {
+                    const uniqueOffset = Math.floor(Math.random() * (uniqueRetries * 1000 + 1));
+                    seedToUse = typeof seedToUse === 'number' ? seedToUse + uniqueOffset : Date.now() % 1000000 + uniqueOffset;
+                }
+
+                const url = buildPollinationsUrl(p, { model: chosenModel, width, height, seed: seedToUse, nologo, format: outFormat });
+                try {
+                    const { blob } = await fetchImageBlob(url, 45000);
+                    const fp = fingerprintForBlob(blob);
+                    if (avoidDup && seenFingerprints.has(fp)) {
+                        lastErr = new Error('duplicate-detected');
+                        if (attempt > smartRetries) throw lastErr;
+                        continue;
+                    }
+
+                    const img = await blobToImage(blob);
+                    img.dataset.seed = seedToUse !== undefined ? String(seedToUse) : '';
+                    img.dataset.format = outFormat;
+                    seenFingerprints.add(fp);
+                    addToGallery(img, p, chosenModel, idx);
+
+                    success = true;
+                } catch (err) {
+                    lastErr = err;
+                    await sleep(600);
+                }
+            }
+
+            if (!success) console.warn(`Failed to generate prompt: "${p}" after ${smartRetries + 1} attempts`, lastErr);
+        }
 
 
 
@@ -649,76 +692,45 @@
             const uniqueRetries = Math.max(0, Math.min(6, Number(els.uniqueRetries.value || 0)));
             const avoidDup = !!els.avoidDup.checked;
             const adaptive = !!els.adaptiveMode.checked;
+            const { width, height } = getDerivedHeight();
 
-            const { width, height } = getDerivedHeight(); // ultra-high-res
+            // Build queue
+            const queue = [];
+            prompts.forEach(p => {
+                const chosenModel = chooseModel(p);
+                for (let i = 1; i <= n; i++) {
+                    queue.push({ p, idx: i, chosenModel });
+                }
+            });
 
-            let k = 0;
-            const total = n * prompts.length;
-            setProgress(0, total);
-            updateActivePrompt('');
+            const total = queue.length;
+            let runningQueue = 0;
+            const concurrency = 3; // adjust for faster parallel generation
 
-            try {
-                for (const p of prompts) {
-                    const chosenModel = chooseModel(p);
-                    for (let i = 1; i <= n; i++) {
-                        if (cancel) { setBusy(false, 'Canceled'); running = false; return; } let
-                            success = false; let attempt = 0; let lastErr = null; const prefSeed = adaptive ? pickSeed(p, undefined) : undefined;
-                        while (attempt <= smartRetries && !success) {
-                            attempt++; updateActivePrompt(`Prompt ${k + 1}/${total}: ${p} (try
-        ${attempt}/${smartRetries + 1})`); let seedToUse = (prefSeed !== undefined) ? prefSeed : (seedBase !== null ?
-                                seedBase : undefined); if (attempt > 1) {
-                                    const uniqueOffset = Math.floor(Math.random() * (uniqueRetries * 1000 + 1));
-                                    if (typeof seedToUse === 'number') seedToUse = seedToUse + uniqueOffset;
-                                    else seedToUse = Date.now() % 1000000 + uniqueOffset;
-                                }
-
-                            const url = buildPollinationsUrl(p, {
-                                model: chosenModel,
-                                width,
-                                height,
-                                seed: seedToUse,
-                                nologo,
-                                format: outFormat
-                            });
-
-                            try {
-                                const { blob } = await fetchImageBlob(url, 45000);
-
-                                const fp = fingerprintForBlob(blob);
-                                if (avoidDup && seenFingerprints.has(fp)) {
-                                    lastErr = new Error('duplicate-detected');
-                                    if (attempt > smartRetries) throw lastErr;
-                                    continue;
-                                }
-
-                                const img = await blobToImage(blob);
-                                img.dataset.seed = seedToUse !== undefined ? String(seedToUse) : '';
-                                img.dataset.format = outFormat;
-
-                                seenFingerprints.add(fp);
-                                addToGallery(img, p, chosenModel, i);
-
-                                success = true;
-                            } catch (err) {
-                                lastErr = err;
-                                await sleep(600);
-                            }
-                        }
-
-                        if (!success) console.warn(`Failed to generate prompt: "${p}" after ${smartRetries + 1} attempts`, lastErr);
-
-                        k++;
-                        setProgress(k, total);
-                        await nextFrame();
+            async function processQueue() {
+                while (queue.length && !cancel) {
+                    if (runningQueue < concurrency) {
+                        const { p, idx, chosenModel } = queue.shift();
+                        runningQueue++;
+                        generateSingleImage(p, idx, total, chosenModel, width, height, outFormat, seedBase, nologo, smartRetries, uniqueRetries, adaptive, avoidDup)
+                            .catch(err => console.warn(err))
+                            .finally(() => { runningQueue--; setProgress(total - queue.length, total); });
+                    } else {
+                        await sleep(100);
                     }
                 }
-            } finally {
-                setProgress(total, total);
-                setBusy(false, 'Done');
-                updateActivePrompt('');
-                running = false;
             }
+
+            await processQueue();
+            // wait for remaining running tasks
+            while (runningQueue > 0) { await sleep(100); }
+
+            setProgress(total, total);
+            setBusy(false, 'Done');
+            updateActivePrompt('');
+            running = false;
         }
+
 
 
         /* ---------- event wiring ---------- */
@@ -727,11 +739,16 @@
                 console.error(err); setBusy(false, 'Error'); running = false;
             });
         });
+        // Stop button
         els.stop.addEventListener('click', () => {
-            cancel = true;
-            if (currentAbort) { try { currentAbort.abort(); } catch { } }
+            cancel = true; // stops generation loop
+            if (currentAbort) {
+                try { currentAbort.abort(); } catch { }
+            }
             setBusy(false, 'Canceled');
         });
+
+        // Clear gallery button
         els.clear.addEventListener('click', () => {
             Array.from(els.gallery.querySelectorAll('img')).forEach(img => {
                 if (img.src && img.src.startsWith('blob:')) {
@@ -743,6 +760,7 @@
             updatePromptCount();
             seenFingerprints.clear();
         });
+
         els.downloadAll.addEventListener('click', downloadAllZip);
         els.surprise.addEventListener('click', () => {
             els.prompt.value = samples[Math.floor(Math.random() *
@@ -808,7 +826,6 @@
         // Defaults
         els.prompt.value = samples[0];
         updatePromptCount();
-        getDerivedHeight();
         getDerivedHeight();
     </script>
 </body>
