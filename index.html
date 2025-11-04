@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unlimited Image Generator</title>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js" defer></script>
+    <style>
+        /* (your original styles kept; omitted here to save space in this preview) */
+        /* Paste your full style block from the previous HTML here */
+        /* For brevity in this message I include the critical rules that were already present */
+        :root {
+            --bg: #0b0f14;
+            --panel: #121821;
+            --muted: #9db1c7;
+            --text: #e6eef6;
+            --accent: #ffffff;
+            --accent-2: #22d3ee;
+            --radius: 14px
+        }
+
+
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+            background: var(--bg);
+            color: var(--text)
+        }
+
+        .wrap {
+            max-width: 1100px;
+            margin: 48px auto;
+            padding: 0 20px
+        }
+
+        .card {
+            background: linear-gradient(180deg, rgba(255, 255, 255, .02), rgba(255, 255, 255, .01));
+            border-radius: var(--radius);
+            border: 1px solid rgba(255, 255, 255, .06);
+            padding: 18px
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1.2fr .8fr;
+            gap: 16px
+        }
+
+        /* Adaptive feedback thumbs */
+        .imgtools .thumb {
+            transition: transform 0.2s, background 0.2s, color 0.2s;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            padding: 4px 6px;
+            font-size: 14px;
+        }
+
+        .imgtools .thumb:hover {
+            transform: scale(1.15);
+            background: var(--accent-2);
+            color: #000;
+        }
+
+        /* Download button style */
+        .imgtools a.btn-ghost {
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            /* text color white */
+            border-radius: 6px;
+            padding: 4px 6px;
+            text-decoration: none;
+            transition: background 0.2s, color 0.2s;
+            margin-left: auto;
+            /* push it to the right */
+            display: inline-block;
+            /* ensures margin-left works */
+        }
+
+        .imgtools a.btn-ghost:hover {
+            background: #fff;
+            color: #000;
+        }
+
+
+
+
+        textarea,
+        select,
+        input {
+            width: 100%;
+            background: var(--panel);
+            color: var(--text);
+            border-radius: 10px;
+            padding: 12px 14px;
+            border: 1px solid rgba(255, 255, 255, .08)
+        }
+
+        #adaptiveMode:checked+span {
+            background: var(--accent);
+            color: #fff;
+            transition: background 0.3s;
+        }
+
+        /* Hide spinners in Chrome, Edge, Safari */
+        #width::-webkit-inner-spin-button,
+        #width::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        /* Hide spinners in Firefox */
+        #width {
+            -moz-appearance: textfield;
+            /* remove spinner in Firefox */
+            -webkit-appearance: none;
+            /* remove spinner in Chrome/Safari */
+            appearance: none;
+            /* standard fallback */
+        }
+
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            padding-top: 10px
+        }
+
+        .pill {
+            font-size: 12px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, .02);
+            display: inline-block
+        }
+
+        .status {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            padding-top: 12px
+        }
+
+        /* ---------- Gallery grid ---------- */
+        .gallery {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 16px;
+            align-items: start;
+            /* rows adapt to tallest image */
+        }
+
+
+        /* ---------- Individual image card ---------- */
+        .imgcard {
+            background: #0e151d;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+
+
+        /* ---------- Image container ---------- */
+        .imgwrap {
+            width: 100%;
+            aspect-ratio: 1 / 1;
+            /* dynamically set in JS */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0a0f15;
+            overflow: hidden;
+            /* clip overflow if needed */
+        }
+
+        .imgwrap img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            /* or 'contain' if you want borders */
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <header class="card">
+            <h1>Unlimited Image Generator — Text → Image <sub>by Tisan</sub></h1>
+        </header>
+
+        <section class="card controls" id="controlsCard">
+            <div class="stack">
+                <label><span>Prompt(s)</span>
+                    <textarea id="prompt"
+                        placeholder="Enter one or many prompts. Choose delimiter in settings."></textarea>
+                </label>
+
+                <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                    <button id="surprise" class="btn-ghost">Surprise me</button>
+                    <button id="pastePrompt" class="btn-ghost">Paste Prompt</button>
+                    <span id="chars" class="pill">0 prompts</span>
+                </div>
+            </div>
+
+            <div class="stack">
+                <div class="grid">
+                    <label><span>Batch (images per prompt)</span>
+                        <select id="count">
+                            <option>1</option>
+                            <option>2</option>
+                            <option selected>3</option>
+                            <option>4</option>
+                            <option>5</option>
+                            <option>6</option>
+                        </select>
+                    </label>
+
+                    <label><span>Aspect preview</span>
+                        <select id="aspect">
+                            <option value="1/1" selected>Square 1:1</option>
+                            <option value="3/4">Portrait 3:4</option>
+                            <option value="4/3">Landscape 4:3</option>
+                            <option value="16/9">Widescreen 16:9</option>
+                        </select>
+                    </label>
+                </div>
+
+                <!-- <div class="row-3" style="margin-top:10px;">
+                    <label><span>Width (px)</span>
+                        <input id="width" type="number" value="1024" readonly />
+                    </label>
+
+                    <label><span>Computed height (px)</span>
+                        <input id="heightComputed" type="number" readonly />
+                    </label>
+                </div> -->
+
+                <!-- Settings row visible now -->
+                <div
+                    style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; align-items:center;">
+                    <div>
+                        <label><span>Split prompts</span>
+                            <select id="delimiterVisible">
+                                <option value="newline">Newline (\n)</option>
+                                <option value="blankline">Blankline</option>
+                                <option value="comma">Comma (,)</option>
+                                <option value="semicolon">Semicolon (;)</option>
+                                <option value="pipe">Pipe (|)</option>
+                                <option value="space">Space</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox"
+                                id="skipAbnormal" /> Skip abnormal</label>
+                        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox"
+                                id="adaptiveMode" /> Adaptive</label>
+                        <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="avoidDup"
+                                checked /> Avoid dup</label>
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                    <label><span>Smart retries (0–5)</span><input id="smartRetries" type="number" min="0" max="5"
+                            value="2" style="width:78px" /></label>
+                    <label><span>Unique retries (0–6)</span><input id="uniqueRetries" type="number" min="0" max="6"
+                            value="3" style="width:78px" /></label>
+                </div>
+
+                <div style="display:flex; gap:8px; margin-top:8px; align-items:center;">
+                    <label><span>Seed (optional)</span><input id="seed" type="text"
+                            placeholder="Random if empty" /></label>
+                    <label style="display:flex;align-items:center;gap:6px;"><input id="nologo" type="checkbox"
+                            checked /> nologo=true</label>
+                    <label><span>Download format</span>
+                        <select id="format">
+                            <option value="jpeg" selected>JPG (max quality)</option>
+                            <option value="png">PNG</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <section class="actions card" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button id="generate" class="btn-primary">Generate</button>
+                <button id="stop" class="btn-danger" disabled>Stop</button>
+                <button id="downloadAll" class="btn-ghost">Download all (zip)</button>
+                <button id="clear" class="btn-ghost">Clear gallery</button>
+            </div>
+
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button id="exportCfg" class="btn-ghost">Export config</button>
+                <input id="importCfg" type="file" accept="application/json" style="display:none" />
+                <button id="importBtn" class="btn-ghost">Import config</button>
+            </div>
+        </section>
+
+        <section class="status hidden card" id="status">
+            <div class="pill" id="statusText">Idle</div>
+            <div class="pill" id="progress">0/0</div>
+            <div class="pill" id="activePrompt"
+                style="min-width:320px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">—</div>
+        </section>
+
+        <section class="gallery" id="gallery" aria-live="polite"></section>
+        <div id="sr-live" aria-live="polite" class="hidden"></div>
+    </div>
+
+    <script>
+        /* ---------- helpers ---------- */
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        async function fetchWithTimeout(url, init = {}, ms = 20000) {
+            const ctrl = new AbortController();
+            const id = setTimeout(() => ctrl.abort(new Error('timeout')), ms);
+            try { return await fetch(url, { ...init, signal: init.signal ?? ctrl.signal }); }
+            finally { clearTimeout(id); }
+        }
+        const nextFrame = () => new Promise(r => requestAnimationFrame(r));
+
+        /* ---------- DOM refs ---------- */
+        const els = {
+            prompt: document.getElementById('prompt'),
+            count: document.getElementById('count'),
+            aspect: document.getElementById('aspect'),
+            gen: document.getElementById('generate'),
+            stop: document.getElementById('stop'),
+            clear: document.getElementById('clear'),
+            status: document.getElementById('status'),
+            statusText: document.getElementById('statusText'),
+            progress: document.getElementById('progress'),
+            gallery: document.getElementById('gallery'),
+            chars: document.getElementById('chars'),
+            surprise: document.getElementById('surprise'),
+            pastePrompt: document.getElementById('pastePrompt'),
+            downloadAll: document.getElementById('downloadAll'),
+            format: document.getElementById('format'),
+            seed: document.getElementById('seed'),
+            nologo: document.getElementById('nologo'),
+            width: document.getElementById('width'),
+            heightComputed: document.getElementById('heightComputed'),
+            delimiterVisible: document.getElementById('delimiterVisible'),
+            skipAbnormal: document.getElementById('skipAbnormal'),
+            adaptiveMode: document.getElementById('adaptiveMode'),
+            avoidDup: document.getElementById('avoidDup'),
+            smartRetries: document.getElementById('smartRetries'),
+            uniqueRetries: document.getElementById('uniqueRetries'),
+            exportCfg: document.getElementById('exportCfg'),
+            importCfg: document.getElementById('importCfg'),
+            importBtn: document.getElementById('importBtn'),
+            statusCard: document.getElementById('status'),
+            activePrompt: document.getElementById('activePrompt'),
+        };
+
+        /* ---------- samples ---------- */
+        const samples = [
+            'A futuristic cityscape at night, neon rain, reflective streets, cinematic ultrawide, volumetric fog, highly detailed',
+            'A cozy reading nook with warm lamp light, rain on the window, soft bokeh, film grain, shallow depth of field',
+            'A photorealistic robot barista serving coffee, stainless steel textures, natural morning light, 50mm lens',
+            'An ancient library hidden in a forest, golden hour, god rays through trees, ethereal atmosphere, high detail',
+            'An isometric pixel art cyberpunk alley, vending machines, animated neon signs, rainy vibes'
+        ];
+
+        let running = false, cancel = false, currentAbort = null;
+        const seenFingerprints = new Set(); // used for duplicate detection
+
+        /* ---------- model chooser ---------- */
+        function chooseModel(prompt) {
+            const p = (prompt || '').toLowerCase();
+            const hits = a => a.some(k => p.includes(k));
+            if (hits(['photo', 'photoreal', 'realistic', 'dslr', 'cinematic', 'bokeh', 'portrait', 'macro', 'lens', 'hdr', 'street photography', 'film'])) return 'flux';
+            if (hits(['anime', 'manga', 'illustration', 'vector', 'flat', 'logo', 'icon', 'pixel art', 'isometric', 'low poly', 'cartoon', 'comic', 'chibi'])) return 'sdv1';
+            if (hits(['abstract', 'surreal', 'dreamlike', 'glitch', 'fractal', 'neural', 'vaporwave'])) return 'sdv2';
+            if (hits(['architecture', 'interior', 'exterior', 'product render', 'studio light', 'packshot'])) return 'flux';
+            if (hits(['oil painting', 'watercolor', 'gouache', 'digital painting', 'concept art', 'fantasy art'])) return 'sdv1';
+            return 'flux';
+        }
+
+        /* ---------- storage helpers ---------- */
+        function tokenizePrompt(p) { return (p || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(x => x && x.length > 2); }
+        function hashPrompt(p) { let h = 0, s = (p || ''); for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0 } return String(h); }
+        function loadPrefs() { try { return JSON.parse(localStorage.getItem('aiGen_prefs') || '{}') } catch { return {} } }
+        function savePrefs(o) { try { localStorage.setItem('aiGen_prefs', JSON.stringify(o)) } catch { } }
+        function recordVote(prompt, model, seed, up) {
+            const store = loadPrefs(); store.winners = store.winners || []; store.tokens = store.tokens || {};
+            const ph = hashPrompt(prompt), scoreDelta = up ? 1 : -1;
+            store.winners.push({ ph, model, seed, score: scoreDelta, ts: Date.now() });
+            if (store.winners.length > 200) store.winners = store.winners.slice(-200);
+            for (const t of tokenizePrompt(prompt)) store.tokens[t] = (store.tokens[t] || 0) + scoreDelta;
+            savePrefs(store);
+        }
+        function pickSeed(prompt, fallback) {
+            const store = loadPrefs(), ph = hashPrompt(prompt);
+            const cand = (store.winners || []).filter(w => w.ph === ph && Number.isFinite(w.seed)).sort((a, b) => b.ts - a.ts)[0];
+            return cand ? cand.seed : fallback;
+        }
+
+        /* ---------- UI helpers ---------- */
+        function setBusy(active, text = 'Generating…') {
+            els.statusCard.classList.toggle('hidden', !active);
+            els.statusText.textContent = text;
+            els.stop.disabled = !active;
+            els.gen.disabled = active;
+        }
+        function setProgress(i, n) {
+            els.progress.textContent = `${i}/${n}`;
+        }
+        function updateActivePrompt(text) {
+            els.activePrompt.textContent = text || '—';
+        }
+
+        function parsePrompts(raw) {
+            const s = (raw || '').trim(); if (!s) return [];
+            const d = els.delimiterVisible.value;
+            let parts = [];
+            switch (d) {
+                case 'newline': parts = s.split(/\n+/); break;
+                case 'blankline': parts = s.split(/\n\s*\n+/); break;
+                case 'comma': parts = s.split(/\s*,\s*/); break;
+                case 'semicolon': parts = s.split(/\s*;\s*/); break;
+                case 'pipe': parts = s.split(/\s*\|\s*/); break;
+                case 'space': parts = s.split(/\s+/); break;
+                default: parts = [s];
+            }
+            return parts.map(x => x.trim()).filter(Boolean);
+        }
+        function updatePromptCount() {
+            const n = parsePrompts(els.prompt.value).length;
+            els.chars.textContent = `${n} prompt${n === 1 ? '' : 's'}`;
+        }
+
+        els.prompt.addEventListener('input', updatePromptCount);
+        els.delimiterVisible.addEventListener('change', updatePromptCount);
+
+        function filenameFromPrompt(prompt, i, ext) {
+            const base = (prompt || '').trim().slice(0, 60).replace(/[^a-z0-9]+/gi, '-').replace(/(^-|-$)/g, '').toLowerCase() || 'image';
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            return `${base}-${i}-${ts}.${ext}`;
+        }
+
+        function parseAspect(val) {
+            const [aw, ah] = (val || '1/1').split('/').map(Number);
+            return { aw: Math.max(1, aw | 0), ah: Math.max(1, ah | 0) };
+        }
+        function getDerivedHeight() {
+            const { aw, ah } = parseAspect(els.aspect.value);
+            const width = 2048; // or less if model limits
+            let height = Math.round(width * (ah / aw));
+            height = Math.round(height / 64) * 64; // AI models prefer multiples of 64
+            return { width, height };
+        }
+
+
+        //els.aspect.addEventListener('change', updateDerivedHeight);
+        //updateDerivedHeight();
+        /* ---------- Build request URL (Pollinations-style endpoint) ---------- */
+        function buildPollinationsUrl(prompt, { model, width, height, seed, nologo, format = 'png' }) {
+            const base = 'https://image.pollinations.ai/prompt/';
+            const q = new URLSearchParams();
+
+            if (width) q.set('width', width);
+            if (height) q.set('height', height);
+
+            if (model && model !== 'any') q.set('model', model);
+            if (nologo) q.set('nologo', 'true');
+            if (seed !== undefined && seed !== null && seed !== '') q.set('seed', seed);
+
+            // Set format and ultra-high quality
+            q.set('format', format); // 'png' or 'jpeg'
+            q.set('q', 'high');      // Pollinations parameter for best quality
+
+            return base + encodeURIComponent(prompt) + '?' + q.toString();
+        }
+
+
+        /* --- fetch image and return blob + img element --- */
+        async function fetchImageBlob(url, timeoutMs = 30000) {
+            currentAbort = new AbortController();
+            try {
+                const res = await fetchWithTimeout(url, { signal: currentAbort.signal }, timeoutMs);
+                if (!res.ok) throw new Error('Image fetch failed: ' + res.status);
+                const blob = await res.blob();
+                return { blob, finalUrl: res.url || url };
+            } finally {
+                currentAbort = null;
+            }
+        }
+
+        async function blobToImage(blob) {
+            const objUrl = URL.createObjectURL(blob);
+            const img = new Image();
+            img.src = objUrl;
+            await new Promise((resolve) => {
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+            });
+
+            // Keep the natural dimensions in dataset, but let CSS scale in gallery
+            img.dataset.naturalWidth = img.naturalWidth;
+            img.dataset.naturalHeight = img.naturalHeight;
+
+            return img;
+        }
+
+
+        /* ---------- duplicate fingerprint helper ---------- */
+        function fingerprintForBlob(blob) {
+            // use type + size as cheap fingerprint
+            return `${blob.type}::${blob.size}`;
+        }
+
+        /* ---------- Gallery helper ---------- */
+        function addToGallery(imgElem, prompt, model, idx) {
+            const card = document.createElement('div');
+            card.className = 'imgcard';
+
+            const wrap = document.createElement('div');
+            wrap.className = 'imgwrap';
+
+            // Dynamic aspect ratio
+            const { aw, ah } = parseAspect(els.aspect.value);
+            wrap.style.width = '100%';
+            wrap.style.aspectRatio = `${aw} / ${ah}`;
+            wrap.style.display = 'flex';
+            wrap.style.alignItems = 'center';
+            wrap.style.justifyContent = 'center';
+            wrap.style.background = '#0a0f15';
+
+            // Scale image while preserving original proportions
+            imgElem.style.width = '100%';
+            imgElem.style.height = '100%';
+            imgElem.style.objectFit = 'contain';
+            imgElem.alt = prompt;
+            imgElem.loading = 'lazy';
+
+            wrap.appendChild(imgElem);
+
+            // Tools container
+            const tools = document.createElement('div');
+            tools.className = 'imgtools';
+            tools.style.display = 'flex';
+            tools.style.alignItems = 'center';
+            tools.style.gap = '6px';
+            tools.style.flexWrap = 'wrap';
+
+            const meta = document.createElement('div');
+            meta.className = 'small';
+            meta.textContent = `${model} · ${prompt.slice(0, 64)}${prompt.length > 64 ? '…' : ''}`;
+
+            const upBtn = document.createElement('button');
+            upBtn.className = 'btn-ghost thumb';
+            upBtn.textContent = '👍';
+            upBtn.title = 'Looks good';
+            upBtn.addEventListener('click', () => recordVote(prompt, model, Number(imgElem.dataset.seed || 0), true));
+
+            const downBtn = document.createElement('button');
+            downBtn.className = 'btn-ghost thumb';
+            downBtn.textContent = '👎';
+            downBtn.title = 'Looks bad';
+            downBtn.addEventListener('click', () => recordVote(prompt, model, Number(imgElem.dataset.seed || 0), false));
+
+            const dl = document.createElement('a');
+            dl.className = 'btn-ghost';
+            dl.textContent = 'Download';
+            dl.download = filenameFromPrompt(prompt, idx, imgElem.dataset.format || 'png');
+            dl.href = imgElem.dataset.downloadHref || imgElem.src;
+            dl.style.color = '#fff';
+            dl.style.marginLeft = 'auto';
+            dl.style.textDecoration = 'none';
+
+            tools.appendChild(meta);
+            tools.appendChild(upBtn);
+            tools.appendChild(downBtn);
+            tools.appendChild(dl);
+
+            card.appendChild(wrap);
+            card.appendChild(tools);
+            els.gallery.prepend(card);
+        }
+        /* ---------- Download all images as ZIP ---------- */
+        async function downloadAllZip() {
+            const items = Array.from(els.gallery.querySelectorAll('img'));
+            if (!items.length) {
+                alert('No images to download');
+                return;
+            }
+
+            const zip = new JSZip();
+            const folder = zip.folder('images') || zip;
+
+            let i = 1;
+            for (const img of items) {
+                try {
+                    // Prefer the original high-res download URL if available
+                    const url = img.dataset.downloadHref || img.src;
+
+                    const res = await fetchWithTimeout(url, {}, 60000);
+                    if (!res.ok) continue;
+
+                    const blob = await res.blob();
+                    const ext = img.dataset.format || blob.type.split('/')[1] || 'png';
+                    const name = filenameFromPrompt(img.alt || 'image', i, ext);
+
+                    folder.file(name, blob);
+                    i++;
+                } catch (err) {
+                    console.warn('Skipped an image for zip:', err);
+                }
+            }
+
+            const content = await zip.generateAsync({ type: 'blob' });
+            saveAs(content, `images-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`);
+        }
+
+        // Attach to the button
+        els.downloadAll.addEventListener('click', downloadAllZip);
+
+
+
+
+        /* ---------- Main flow with retries, uniqueness, duplication avoidance ---------- */
+        async function generateBatch() {
+            if (running) return;
+            const prompts = parsePrompts(els.prompt.value);
+            if (!prompts.length) { els.prompt.focus(); return; }
+
+            running = true; cancel = false;
+            setBusy(true, 'Generating…');
+
+            const n = parseInt(els.count.value, 10) || 1;
+            const outFormat = els.format.value || 'png';
+            const seedBaseText = (els.seed.value || '').trim();
+            const seedBase = seedBaseText ? Number(seedBaseText) : null;
+            const nologo = !!els.nologo.checked;
+            const smartRetries = Math.max(0, Math.min(5, Number(els.smartRetries.value || 0)));
+            const uniqueRetries = Math.max(0, Math.min(6, Number(els.uniqueRetries.value || 0)));
+            const avoidDup = !!els.avoidDup.checked;
+            const adaptive = !!els.adaptiveMode.checked;
+
+            const { width, height } = getDerivedHeight(); // ultra-high-res
+
+            let k = 0;
+            const total = n * prompts.length;
+            setProgress(0, total);
+            updateActivePrompt('');
+
+            try {
+                for (const p of prompts) {
+                    const chosenModel = chooseModel(p);
+                    for (let i = 1; i <= n; i++) {
+                        if (cancel) { setBusy(false, 'Canceled'); running = false; return; } let
+                            success = false; let attempt = 0; let lastErr = null; const prefSeed = adaptive ? pickSeed(p, undefined) : undefined;
+                        while (attempt <= smartRetries && !success) {
+                            attempt++; updateActivePrompt(`Prompt ${k + 1}/${total}: ${p} (try
+        ${attempt}/${smartRetries + 1})`); let seedToUse = (prefSeed !== undefined) ? prefSeed : (seedBase !== null ?
+                                seedBase : undefined); if (attempt > 1) {
+                                    const uniqueOffset = Math.floor(Math.random() * (uniqueRetries * 1000 + 1));
+                                    if (typeof seedToUse === 'number') seedToUse = seedToUse + uniqueOffset;
+                                    else seedToUse = Date.now() % 1000000 + uniqueOffset;
+                                }
+
+                            const url = buildPollinationsUrl(p, {
+                                model: chosenModel,
+                                width,
+                                height,
+                                seed: seedToUse,
+                                nologo,
+                                format: outFormat
+                            });
+
+                            try {
+                                const { blob } = await fetchImageBlob(url, 45000);
+
+                                const fp = fingerprintForBlob(blob);
+                                if (avoidDup && seenFingerprints.has(fp)) {
+                                    lastErr = new Error('duplicate-detected');
+                                    if (attempt > smartRetries) throw lastErr;
+                                    continue;
+                                }
+
+                                const img = await blobToImage(blob);
+                                img.dataset.seed = seedToUse !== undefined ? String(seedToUse) : '';
+                                img.dataset.format = outFormat;
+
+                                seenFingerprints.add(fp);
+                                addToGallery(img, p, chosenModel, i);
+
+                                success = true;
+                            } catch (err) {
+                                lastErr = err;
+                                await sleep(600);
+                            }
+                        }
+
+                        if (!success) console.warn(`Failed to generate prompt: "${p}" after ${smartRetries + 1} attempts`, lastErr);
+
+                        k++;
+                        setProgress(k, total);
+                        await nextFrame();
+                    }
+                }
+            } finally {
+                setProgress(total, total);
+                setBusy(false, 'Done');
+                updateActivePrompt('');
+                running = false;
+            }
+        }
+
+
+        /* ---------- event wiring ---------- */
+        els.gen.addEventListener('click', (e) => {
+            e.preventDefault(); generateBatch().catch(err => {
+                console.error(err); setBusy(false, 'Error'); running = false;
+            });
+        });
+        els.stop.addEventListener('click', () => {
+            cancel = true;
+            if (currentAbort) { try { currentAbort.abort(); } catch { } }
+            setBusy(false, 'Canceled');
+        });
+        els.clear.addEventListener('click', () => {
+            Array.from(els.gallery.querySelectorAll('img')).forEach(img => {
+                if (img.src && img.src.startsWith('blob:')) {
+                    try { URL.revokeObjectURL(img.src); } catch { }
+                }
+            });
+            els.gallery.innerHTML = '';
+            setProgress(0, 0);
+            updatePromptCount();
+            seenFingerprints.clear();
+        });
+        els.downloadAll.addEventListener('click', downloadAllZip);
+        els.surprise.addEventListener('click', () => {
+            els.prompt.value = samples[Math.floor(Math.random() *
+                samples.length)]; updatePromptCount();
+        });
+        els.pastePrompt.addEventListener('click', async () => {
+            try {
+                if (!navigator.clipboard || !navigator.clipboard.readText) {
+                    alert('Clipboard API not available. Use Ctrl+V.');
+                    els.prompt.focus(); return;
+                }
+                const text = await navigator.clipboard.readText();
+                if (text && text.trim()) { els.prompt.value = text.trim(); updatePromptCount(); } else {
+                    alert('Clipboardempty');
+                }
+            } catch (e) { alert('Failed to read clipboard (needs HTTPS or permission).'); els.prompt.focus(); }
+        });
+
+        // Config export/import
+        els.exportCfg.addEventListener('click', () => {
+            const cfg = {
+                delimiter: els.delimiterVisible.value,
+                skipAbnormal: !!els.skipAbnormal.checked,
+                adaptiveMode: !!els.adaptiveMode.checked,
+                avoidDup: !!els.avoidDup.checked,
+                smartRetries: Number(els.smartRetries.value),
+                uniqueRetries: Number(els.uniqueRetries.value),
+                width: Number(els.width.value),
+                aspect: els.aspect.value,
+                nologo: !!els.nologo.checked,
+                format: els.format.value
+            };
+            const blob = new Blob([JSON.stringify(cfg, null, 2)], { type: 'application/json' });
+            saveAs(blob, `aiGen-config-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+        });
+        els.importBtn.addEventListener('click', () => els.importCfg.click());
+        els.importCfg.addEventListener('change', async (ev) => {
+            const f = ev.target.files && ev.target.files[0];
+            if (!f) return;
+            try {
+                const text = await f.text();
+                const cfg = JSON.parse(text);
+                if (cfg.delimiter) els.delimiterVisible.value = cfg.delimiter;
+                if (typeof cfg.skipAbnormal === 'boolean') els.skipAbnormal.checked = cfg.skipAbnormal;
+                if (typeof cfg.adaptiveMode === 'boolean') els.adaptiveMode.checked = cfg.adaptiveMode;
+                if (typeof cfg.avoidDup === 'boolean') els.avoidDup.checked = cfg.avoidDup;
+                if (cfg.smartRetries !== undefined) els.smartRetries.value = cfg.smartRetries;
+                if (cfg.uniqueRetries !== undefined) els.uniqueRetries.value = cfg.uniqueRetries;
+                // if (cfg.width) els.width.value = cfg.width;
+                if (cfg.aspect) els.aspect.value = cfg.aspect;
+                getDerivedHeight();
+                if (typeof cfg.nologo === 'boolean') els.nologo.checked = cfg.nologo;
+                if (cfg.format) els.format.value = cfg.format;
+                updatePromptCount();
+                alert('Config imported');
+            } catch (err) {
+                alert('Failed to import config: ' + err.message);
+            } finally {
+                els.importCfg.value = '';
+            }
+        });
+
+        // Defaults
+        els.prompt.value = samples[0];
+        updatePromptCount();
+        getDerivedHeight();
+        getDerivedHeight();
+    </script>
+</body>
+
+</html>
